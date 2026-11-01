@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" fill="#008080"/>
+  <rect x="56" y="56" width="400" height="400" fill="#C8C8C8"/>
+  <rect x="56" y="56" width="400" height="64" fill="#00006F"/>
+  <text x="76" y="104" font-family="monospace" font-size="40" font-weight="bold" fill="#FFFFFF">DURF.EXE</text>
+  <text x="76" y="220" font-family="monospace" font-size="120" font-weight="bold" fill="#1C1C1C">$0.00</text>
+  <text x="76" y="300" font-family="monospace" font-size="34" fill="#1C1C1C">REQUIRED FUNDS</text>
+  <rect x="76" y="340" width="360" height="56" fill="#FFF36B" stroke="#1C1C1C" stroke-width="4"/>
+  <text x="96" y="380" font-family="monospace" font-size="32" font-weight="bold" fill="#1C1C1C">START DURFING</text>
+</svg>

@@ -1,0 +1,1 @@
+{"root":["./src/App.tsx","./src/components.tsx","./src/main.tsx","./src/seed.ts","./src/spec.ts","./src/store.tsx","./src/supabase.ts","./src/types.ts","./src/vite-env.d.ts","./src/windows/shared.ts","./src/windows/windows.tsx","./src/windows/windows2.tsx"],"version":"5.9.3"}

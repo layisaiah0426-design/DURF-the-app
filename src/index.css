@@ -1,0 +1,60 @@
+@import url('https://fonts.googleapis.com/css2?family=VT323&display=swap');
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+body {
+  font-family: 'VT323', 'Courier New', monospace;
+  background: #008080;
+  color: #1c1c1c;
+  -webkit-font-smoothing: none;
+}
+
+button,
+input,
+select,
+textarea {
+  font-family: inherit;
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px dotted #1c1c1c;
+  outline-offset: 2px;
+}
+
+a {
+  color: #00006f;
+}
+
+@keyframes faxFeed {
+  0% {
+    transform: translateY(-12px);
+    opacity: 0;
+  }
+  100% {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.fax-feed {
+  animation: faxFeed 0.5s steps(3) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fax-feed {
+    animation: none;
+  }
+}
