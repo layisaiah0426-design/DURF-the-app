@@ -28,6 +28,7 @@ export function WinButton({
   danger,
   disabled,
   style,
+  type = 'button',
 }: {
   children: React.ReactNode;
   onClick?: () => void;
@@ -35,9 +36,11 @@ export function WinButton({
   danger?: boolean;
   disabled?: boolean;
   style?: React.CSSProperties;
+  type?: 'button' | 'submit';
 }) {
   return (
     <button
+      type={type}
       onClick={onClick}
       disabled={disabled}
       style={{

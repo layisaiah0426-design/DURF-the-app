@@ -111,6 +111,7 @@ export interface Store {
   demoMode: boolean;
   booted: boolean;
   setBooted: () => void;
+  authReady: boolean;
   tutorialStep: number;
   setTutorialStep: (n: number) => void;
   user: UserAccount | null;
@@ -216,6 +217,104 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     void refreshDeck();
   }, [refreshDeck]);
+
+  // Sync one local account to its Supabase rows under the auth id.
+  const syncAccountToSupabase = useCallback(async (acct: UserAccount) => {
+    await sbUpsert(
+      'users',
+      { id: acct.id, email: acct.email, dob: acct.dob, first_name: acct.firstName },
+      'id',
+    );
+    const p = acct.profile;
+    await sbUpsert(
+      'profiles',
+      {
+        user_id: acct.id,
+        first_name: p.firstName,
+        age: p.age,
+        city: p.city,
+        intent: p.intent,
+        school: p.school ?? null,
+        faith_context: p.faithContext ?? null,
+        widgets: p.widgets,
+        photos: p.photos,
+      },
+      'user_id',
+    );
+  }, []);
+
+  // Rebuild a local account from the user's own Supabase rows (new device,
+  // or a cold start where local storage is gone but the session survives).
+  const restoreAccount = useCallback(async (authId: string): Promise<UserAccount | null> => {
+    const uRows = await sbSelect<{ id: string; email: string; dob: string; first_name: string }>(
+      'users',
+      'id,email,dob,first_name',
+    );
+    const pRows = await sbSelect<DbProfileRow>(
+      'profiles',
+      'user_id,first_name,age,city,intent,school,faith_context,widgets,photos,paused',
+    );
+    const uRow = uRows.find((r) => r.id === authId);
+    const pRow = pRows.find((r) => r.user_id === authId);
+    if (!uRow || !pRow) return null;
+    return {
+      id: authId,
+      email: uRow.email,
+      firstName: uRow.first_name,
+      dob: uRow.dob,
+      profile: mapDbProfile(pRow),
+      mode: 'Dating',
+      battery: BATTERY_CAP,
+      lastRefillDay: todayStr(),
+    };
+  }, []);
+
+  // "Remember me" restore, once on mount. If the browser still holds a
+  // Supabase session and the user did not log out (or sign in without
+  // "remember me"), the app opens straight to the desktop — even on a
+  // device whose local storage was cleared. Best-effort: any failure just
+  // leaves the sign-in screen, which is the safe default.
+  const [authReady, setAuthReady] = useState(!SUPABASE_CONFIGURED);
+  useEffect(() => {
+    if (!supabase) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        let remembered = true;
+        try {
+          remembered = localStorage.getItem('durf-session-v1') !== 'logged-out';
+        } catch {
+          /* ignore */
+        }
+        if (remembered) {
+          const { data } = await supabase.auth.getSession();
+          const sessionUser = data.session?.user;
+          if (sessionUser && !cancelled) {
+            if (user && user.email === sessionUser.email && user.id !== sessionUser.id) {
+              const migrated = { ...user, id: sessionUser.id };
+              setUser(migrated);
+              await syncAccountToSupabase(migrated);
+              await refreshDeck();
+            } else if (!user) {
+              const restored = await restoreAccount(sessionUser.id);
+              if (restored && !cancelled) {
+                setUser(restored);
+                await refreshDeck();
+              }
+            }
+          }
+        }
+      } catch {
+        /* restore is best-effort */
+      }
+      if (!cancelled) setAuthReady(true);
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // Mount-only on purpose: the closure reads the initial local user.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [swiped, setSwiped] = useLocalStorage<string[]>('durf-swiped-v1', []);
   const [undoAvailable, setUndoAvailable] = useState(false);
   const [matches, setMatches] = useLocalStorage<Match[]>('durf-matches-v1', []);
@@ -305,27 +404,9 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
           let acct = user && user.email === email ? user : null;
           if (!acct) {
             // New device: rebuild the local account from the user's own rows.
-            const uRows = await sbSelect<{ id: string; email: string; dob: string; first_name: string }>(
-              'users',
-              'id,email,dob,first_name',
-            );
-            const pRows = await sbSelect<DbProfileRow>(
-              'profiles',
-              'user_id,first_name,age,city,intent,school,faith_context,widgets,photos,paused',
-            );
-            const uRow = uRows.find((r) => r.id === authId);
-            const pRow = pRows.find((r) => r.user_id === authId);
-            if (uRow && pRow) {
-              acct = {
-                id: authId,
-                email: uRow.email,
-                firstName: uRow.first_name,
-                dob: uRow.dob,
-                profile: mapDbProfile(pRow),
-                mode: 'Dating',
-                battery: BATTERY_CAP,
-                lastRefillDay: todayStr(),
-              };
+            const rebuilt = await restoreAccount(authId);
+            if (rebuilt) {
+              acct = rebuilt;
               setUser(acct);
             }
           } else if (acct.id !== authId) {
@@ -333,27 +414,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
             setUser(acct);
           }
           if (acct) {
-            await sbUpsert(
-              'users',
-              { id: authId, email: acct.email, dob: acct.dob, first_name: acct.firstName },
-              'id',
-            );
-            const p = acct.profile;
-            await sbUpsert(
-              'profiles',
-              {
-                user_id: authId,
-                first_name: p.firstName,
-                age: p.age,
-                city: p.city,
-                intent: p.intent,
-                school: p.school ?? null,
-                faith_context: p.faithContext ?? null,
-                widgets: p.widgets,
-                photos: p.photos,
-              },
-              'user_id',
-            );
+            await syncAccountToSupabase(acct);
             await refreshDeck();
             return null;
           }
@@ -384,7 +445,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       }
       return 'No local profile for that email yet — sign up first, then sign in.';
     },
-    [demoMode, user, setUser, refreshDeck],
+    [demoMode, user, setUser, refreshDeck, syncAccountToSupabase, restoreAccount],
   );
 
   const signOut = useCallback(() => {
@@ -732,6 +793,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     demoMode,
     booted,
     setBooted,
+    authReady,
     tutorialStep,
     setTutorialStep,
     user,

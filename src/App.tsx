@@ -76,7 +76,7 @@ function Tutorial({ onDone }: { onDone: () => void }) {
   );
 }
 
-function Auth({ onAuthed }: { onAuthed: () => void }) {
+function Auth({ onAuthed }: { onAuthed: (remember: boolean) => void }) {
   const s = useStore();
   const [tab, setTab] = useState<'up' | 'in'>('up');
   const [email, setEmail] = useState('');
@@ -84,10 +84,20 @@ function Auth({ onAuthed }: { onAuthed: () => void }) {
   const [firstName, setFirstName] = useState('');
   const [dob, setDob] = useState('');
   const [agree, setAgree] = useState(false);
+  // Remember me defaults to on, unless the last session was explicitly
+  // ended (logged out, or signed in without "remember me").
+  const [remember, setRemember] = useState(() => {
+    try {
+      return localStorage.getItem('durf-session-v1') !== 'logged-out';
+    } catch {
+      return true;
+    }
+  });
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
 
   const submit = async () => {
+    if (busy || (tab === 'up' && !agree)) return;
     setErr('');
     setBusy(true);
     const res =
@@ -96,7 +106,7 @@ function Auth({ onAuthed }: { onAuthed: () => void }) {
         : await s.signIn(email, password);
     setBusy(false);
     if (res) setErr(res);
-    else onAuthed();
+    else onAuthed(tab === 'up' ? true : remember);
   };
 
   return (
@@ -112,29 +122,43 @@ function Auth({ onAuthed }: { onAuthed: () => void }) {
           <WinButton primary={tab === 'up'} onClick={() => setTab('up')}>Sign up</WinButton>
           <WinButton primary={tab === 'in'} onClick={() => setTab('in')}>Sign in</WinButton>
         </div>
-        <Field label="Email">
-          <input style={inputStyle} value={email} onChange={(e) => setEmail(e.target.value)} type="email" autoComplete="email" />
-        </Field>
-        {tab === 'up' && (
-          <>
-            <Field label="First name">
-              <input style={inputStyle} value={firstName} onChange={(e) => setFirstName(e.target.value)} />
-            </Field>
-            <Field label="Date of birth (18+ only)">
-              <input style={inputStyle} value={dob} onChange={(e) => setDob(e.target.value)} type="date" />
-            </Field>
+        {/* A real <form> (not divs + onClick) is what lets the browser offer
+            to save the password and autofill it next time. */}
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            void submit();
+          }}
+        >
+          <Field label="Email">
+            <input style={inputStyle} value={email} onChange={(e) => setEmail(e.target.value)} type="email" name="email" autoComplete="email" />
+          </Field>
+          {tab === 'up' && (
+            <>
+              <Field label="First name">
+                <input style={inputStyle} value={firstName} onChange={(e) => setFirstName(e.target.value)} name="given-name" autoComplete="given-name" />
+              </Field>
+              <Field label="Date of birth (18+ only)">
+                <input style={inputStyle} value={dob} onChange={(e) => setDob(e.target.value)} type="date" name="bday" autoComplete="bday" />
+              </Field>
+              <label style={{ display: 'block', fontSize: 17, marginBottom: 10 }}>
+                <input type="checkbox" checked={agree} onChange={(e) => setAgree(e.target.checked)} /> I agree to the community guidelines and consent rules.
+              </label>
+            </>
+          )}
+          <Field label={s.demoMode ? 'Password (demo only — ignored)' : 'Password'}>
+            <input style={inputStyle} value={password} onChange={(e) => setPassword(e.target.value)} type="password" name="password" autoComplete={tab === 'up' ? 'new-password' : 'current-password'} />
+          </Field>
+          {tab === 'in' && (
             <label style={{ display: 'block', fontSize: 17, marginBottom: 10 }}>
-              <input type="checkbox" checked={agree} onChange={(e) => setAgree(e.target.checked)} /> I agree to the community guidelines and consent rules.
+              <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} /> Remember me on this device
             </label>
-          </>
-        )}
-        <Field label={s.demoMode ? 'Password (demo only — ignored)' : 'Password'}>
-          <input style={inputStyle} value={password} onChange={(e) => setPassword(e.target.value)} type="password" autoComplete={tab === 'up' ? 'new-password' : 'current-password'} />
-        </Field>
-        {err && <div style={{ fontSize: 17, color: '#A40000', marginBottom: 8 }}>{err}</div>}
-        <WinButton primary disabled={busy || (tab === 'up' && !agree)} onClick={submit}>
-          {busy ? 'Working…' : tab === 'up' ? 'Create account' : 'Sign in'}
-        </WinButton>
+          )}
+          {err && <div style={{ fontSize: 17, color: '#A40000', marginBottom: 8 }}>{err}</div>}
+          <WinButton primary type="submit" disabled={busy || (tab === 'up' && !agree)}>
+            {busy ? 'Working…' : tab === 'up' ? 'Create account' : 'Sign in'}
+          </WinButton>
+        </form>
         <div style={{ fontSize: 15, marginTop: 8 }}>Under-18 accounts cannot proceed. Safety copy is plain language, always.</div>
       </div>
     </div>
@@ -368,6 +392,15 @@ function Shell() {
   const [phase, setPhase] = useState<'boot' | 'tutorial' | 'auth' | 'desktop'>(s.booted ? (s.user ? 'desktop' : 'auth') : 'boot');
   // Session flag survives reloads; logging out ends the session without
   // deleting the local account (the server copy is authoritative when set).
+  // The flag is the remember-me switch: 'logged-out' means the next visit
+  // must sign in again, anything else means "remember me".
+  const sessionFlagActive = () => {
+    try {
+      return localStorage.getItem('durf-session-v1') !== 'logged-out';
+    } catch {
+      return true;
+    }
+  };
   const [session, setSession] = useState<boolean>(() => {
     try {
       return localStorage.getItem('durf-session-v1') !== 'logged-out' && Boolean(s.user);
@@ -377,11 +410,28 @@ function Shell() {
   });
 
   useEffect(() => {
-    if (s.booted && phase === 'boot') setPhase(s.user ? 'desktop' : 'tutorial');
+    if (s.booted && phase === 'boot') {
+      setPhase(!s.user ? 'tutorial' : sessionFlagActive() ? 'desktop' : 'auth');
+    }
   }, [s.booted, s.user, phase]);
 
+  // If a remembered session restored the user after the auth screen already
+  // rendered, move straight to the desktop. The flag guard keeps a real
+  // logout on the sign-in screen.
+  useEffect(() => {
+    if (sessionFlagActive() && s.user && phase === 'auth') setPhase('desktop');
+  }, [s.user, phase]);
+
+  if (!s.authReady) {
+    return (
+      <div style={{ minHeight: '100vh', background: '#1C1C1C', color: '#fff', padding: 24, fontSize: 22 }}>
+        <div style={{ fontSize: 44, fontWeight: 'bold' }}>DURF OPERATING SYSTEM v1.0</div>
+        <div style={{ marginTop: 16 }}>&gt; Restoring session…</div>
+      </div>
+    );
+  }
   if (phase === 'boot') {
-    return <Boot onDone={() => { s.setBooted(); setPhase(s.user ? 'desktop' : 'tutorial'); }} />;
+    return <Boot onDone={() => { s.setBooted(); setPhase(!s.user ? 'tutorial' : sessionFlagActive() ? 'desktop' : 'auth'); }} />;
   }
   if (phase === 'tutorial') {
     return <Tutorial onDone={() => setPhase('auth')} />;
@@ -389,9 +439,9 @@ function Shell() {
   if (phase === 'auth' || !session) {
     return (
       <Auth
-        onAuthed={() => {
+        onAuthed={(remember) => {
           try {
-            localStorage.setItem('durf-session-v1', 'active');
+            localStorage.setItem('durf-session-v1', remember ? 'active' : 'logged-out');
           } catch {
             /* ignore */
           }
