@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Field, Notice, WinButton, Window, inputStyle } from './components';
-import { COPY } from './spec';
+import { COPY, SPONSOR_CREATIVES } from './spec';
 import { StoreProvider, useStore } from './store';
 import type { AppId } from './types';
 import { ChatWindow, DiscoverWindow, FaxWindow, ProfileWindow } from './windows/windows';
@@ -144,11 +144,18 @@ function Auth({ onAuthed }: { onAuthed: () => void }) {
 function Desktop({ onLogout }: { onLogout: () => void }) {
   const s = useStore();
   const [adDismissed, setAdDismissed] = useState(false);
+  const [adIndex, setAdIndex] = useState(0);
   const [logoutConfirm, setLogoutConfirm] = useState(false);
   const [clock, setClock] = useState(new Date());
 
   useEffect(() => {
     const t = setInterval(() => setClock(new Date()), 30000);
+    return () => clearInterval(t);
+  }, []);
+
+  // Rotate the sponsor creative so the slot behaves like a real ad widget.
+  useEffect(() => {
+    const t = setInterval(() => setAdIndex((v) => (v + 1) % SPONSOR_CREATIVES.length), 20000);
     return () => clearInterval(t);
   }, []);
 
@@ -267,10 +274,11 @@ function Desktop({ onLogout }: { onLogout: () => void }) {
             <div style={{ maxWidth: 520, margin: '18px auto 0', background: '#C8C8C8', border: '2px solid', borderColor: '#FFFFFF #404040 #404040 #FFFFFF', padding: 10 }}>
               <div style={{ fontSize: 14, fontWeight: 'bold' }}>SPONSORED · Why am I seeing this?</div>
               {adDismissed ? (
-                <div style={{ fontSize: 17 }}>Sponsored slot — another creative loads later. The widget never covers your icons.</div>
+                <div style={{ fontSize: 17 }}>Sponsored slot hidden for this session. The widget never covers your icons.</div>
               ) : (
                 <div>
-                  <div style={{ fontSize: 19 }}>NATIVE AD CREATIVE — Your local thrift store called. It misses you.</div>
+                  <div style={{ fontSize: 19 }}>{SPONSOR_CREATIVES[adIndex].headline}</div>
+                  <div style={{ fontSize: 16, marginTop: 4 }}>{SPONSOR_CREATIVES[adIndex].body}</div>
                   <button onClick={() => setAdDismissed(true)} style={{ fontFamily: 'inherit', cursor: 'pointer', fontSize: 15 }}>Dismiss this creative</button>
                 </div>
               )}

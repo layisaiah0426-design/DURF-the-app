@@ -2,13 +2,14 @@ import React, {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useState,
 } from 'react';
 import { BATTERY_CAP, DATE_CATALOG, REWARD_CHARGE } from './spec';
 import type { Mode } from './spec';
 import { SEED_GREETING, SEED_PROFILES, emptyProfile } from './seed';
-import { sbInsert, supabase, SUPABASE_CONFIGURED, useLocalStorage } from './supabase';
+import { sbInsert, sbSelect, sbUpsert, supabase, SUPABASE_CONFIGURED, useLocalStorage } from './supabase';
 import type {
   AppId,
   ChatMessage,
@@ -18,6 +19,7 @@ import type {
   Match,
   Notice,
   Profile,
+  ProfileWidget,
   UserAccount,
 } from './types';
 
@@ -66,6 +68,45 @@ function todayStr() {
   return new Date().toISOString().slice(0, 10);
 }
 
+// One row of the Supabase `profiles` table, as selected for Discover.
+interface DbProfileRow {
+  user_id: string;
+  first_name: string;
+  age: number;
+  city: string;
+  intent: string;
+  school: string | null;
+  faith_context: string | null;
+  widgets: unknown;
+  photos: unknown;
+  paused?: boolean;
+}
+
+// Map a database profile to the app's Profile. Distance is genuinely
+// unknown (the app never tracks precise location), so it stays 0 and the
+// card shows the city without a made-up mileage.
+function mapDbProfile(r: DbProfileRow): Profile {
+  const widgets = Array.isArray(r.widgets)
+    ? (r.widgets as ProfileWidget[]).filter((w) => w && typeof w.value === 'string')
+    : [];
+  const photos =
+    Array.isArray(r.photos) && r.photos.length > 0
+      ? (r.photos as string[])
+      : [r.first_name.charAt(0).toUpperCase()];
+  return {
+    id: r.user_id,
+    firstName: r.first_name,
+    age: r.age,
+    city: r.city,
+    distanceMiles: 0,
+    intent: r.intent,
+    school: r.school ?? undefined,
+    faithContext: r.faith_context ?? undefined,
+    photos,
+    widgets,
+  };
+}
+
 export interface Store {
   demoMode: boolean;
   booted: boolean;
@@ -88,6 +129,7 @@ export interface Store {
   setOpenApp: (a: AppId) => void;
   deck: Profile[];
   deckIndex: number;
+  refreshDeck: () => Promise<void>;
   swiped: string[];
   undoAvailable: boolean;
   norf: () => void;
@@ -160,6 +202,20 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const [lastRefillDay, setLastRefillDay] = useLocalStorage<string>('durf-refill-v1', todayStr());
   const [openApp, setOpenApp] = useState<AppId>('desktop');
   const [deckIndex, setDeckIndex] = useState(0);
+  const [realProfiles, setRealProfiles] = useState<Profile[]>([]);
+  // Re-fetch real profiles from Supabase (Discover's pool when a backend is
+  // configured). Never throws; an empty result just means an empty deck.
+  const refreshDeck = useCallback(async () => {
+    if (!supabase) return;
+    const rows = await sbSelect<DbProfileRow>(
+      'profiles',
+      'user_id,first_name,age,city,intent,school,faith_context,widgets,photos,paused',
+    );
+    setRealProfiles(rows.filter((r) => !r.paused).map(mapDbProfile));
+  }, []);
+  useEffect(() => {
+    void refreshDeck();
+  }, [refreshDeck]);
   const [swiped, setSwiped] = useLocalStorage<string[]>('durf-swiped-v1', []);
   const [undoAvailable, setUndoAvailable] = useState(false);
   const [matches, setMatches] = useLocalStorage<Match[]>('durf-matches-v1', []);
@@ -195,9 +251,9 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const profileOf = useCallback(
     (id: string) => {
       if (id === 'me') return user?.profile;
-      return SEED_PROFILES.find((p) => p.id === id);
+      return realProfiles.find((p) => p.id === id) ?? SEED_PROFILES.find((p) => p.id === id);
     },
-    [user],
+    [user, realProfiles],
   );
 
   const setBooted = useCallback(() => setBootedState(true), []);
@@ -224,9 +280,10 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       };
       setUser(account);
       setBattery(BATTERY_CAP);
-      if (supabase) {
-        void sbInsert('users', { id: account.id, email, dob, created_at: new Date().toISOString() });
-      }
+      // No Supabase rows here on purpose: with email confirmation required,
+      // there is no session yet, and the local id is not the auth id — an
+      // insert would fail the foreign key. Rows sync on first sign-in
+      // (see signIn), once the auth id is known.
       return null;
     },
     [setUser, setBattery],
@@ -238,6 +295,74 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         if (!password) return 'Enter your password.';
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) return error.message;
+        // The Supabase auth id is the real user id. Local accounts created
+        // at sign-up carry a random local id, so migrate to the auth id on
+        // sign-in and sync the profile — otherwise backend rows fail their
+        // foreign keys and RLS checks.
+        const { data: authData } = await supabase.auth.getUser();
+        const authId = authData.user?.id;
+        if (authId) {
+          let acct = user && user.email === email ? user : null;
+          if (!acct) {
+            // New device: rebuild the local account from the user's own rows.
+            const uRows = await sbSelect<{ id: string; email: string; dob: string; first_name: string }>(
+              'users',
+              'id,email,dob,first_name',
+            );
+            const pRows = await sbSelect<DbProfileRow>(
+              'profiles',
+              'user_id,first_name,age,city,intent,school,faith_context,widgets,photos,paused',
+            );
+            const uRow = uRows.find((r) => r.id === authId);
+            const pRow = pRows.find((r) => r.user_id === authId);
+            if (uRow && pRow) {
+              acct = {
+                id: authId,
+                email: uRow.email,
+                firstName: uRow.first_name,
+                dob: uRow.dob,
+                profile: mapDbProfile(pRow),
+                mode: 'Dating',
+                battery: BATTERY_CAP,
+                lastRefillDay: todayStr(),
+              };
+              setUser(acct);
+            }
+          } else if (acct.id !== authId) {
+            acct = { ...acct, id: authId };
+            setUser(acct);
+          }
+          if (acct) {
+            await sbUpsert(
+              'users',
+              { id: authId, email: acct.email, dob: acct.dob, first_name: acct.firstName },
+              'id',
+            );
+            const p = acct.profile;
+            await sbUpsert(
+              'profiles',
+              {
+                user_id: authId,
+                first_name: p.firstName,
+                age: p.age,
+                city: p.city,
+                intent: p.intent,
+                school: p.school ?? null,
+                faith_context: p.faithContext ?? null,
+                widgets: p.widgets,
+                photos: p.photos,
+              },
+              'user_id',
+            );
+            await refreshDeck();
+            return null;
+          }
+          return 'Signed in, but no Durf profile was found for this account — sign up first, then sign in.';
+        }
+        // No auth id despite a successful password sign-in: fall back to the
+        // local account if one exists on this device.
+        if (user && user.email === email) return null;
+        return 'No local profile for that email yet — sign up first, then sign in.';
       }
       const existing = user && user.email === email ? user : null;
       if (existing) return null;
@@ -259,7 +384,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       }
       return 'No local profile for that email yet — sign up first, then sign in.';
     },
-    [demoMode, user, setUser],
+    [demoMode, user, setUser, refreshDeck],
   );
 
   const signOut = useCallback(() => {
@@ -272,14 +397,21 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       if (!user) return;
       setUser({ ...user, profile: p });
       if (supabase) {
-        void sbInsert('profiles', {
-          user_id: user.id,
-          first_name: p.firstName,
-          age: p.age,
-          city: p.city,
-          intent: p.intent,
-          widgets: p.widgets,
-        });
+        void sbUpsert(
+          'profiles',
+          {
+            user_id: user.id,
+            first_name: p.firstName,
+            age: p.age,
+            city: p.city,
+            intent: p.intent,
+            school: p.school ?? null,
+            faith_context: p.faithContext ?? null,
+            widgets: p.widgets,
+            photos: p.photos,
+          },
+          'user_id',
+        );
       }
     },
     [user, setUser],
@@ -307,7 +439,10 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   const deck = useMemo(() => {
     const seen = new Set(swiped);
-    const pool = SEED_PROFILES.filter((p) => !seen.has(p.id) && !blocked.includes(p.id));
+    // Live app: real Supabase profiles only — no starter catalog. Demo mode
+    // (no backend configured) keeps the seed catalog so the app is tryable.
+    const source = demoMode ? SEED_PROFILES : realProfiles;
+    const pool = source.filter((p) => p.id !== user?.id && !seen.has(p.id) && !blocked.includes(p.id));
     const filtered = pool.filter(
       (p) =>
         p.age >= settings.minAge &&
@@ -316,7 +451,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         (settings.intent === 'Any' || p.intent === settings.intent),
     );
     return filtered.length > 0 ? filtered : pool;
-  }, [swiped, blocked, settings]);
+  }, [swiped, blocked, settings, demoMode, realProfiles, user]);
 
   const currentCard = deck[deckIndex % Math.max(deck.length, 1)];
 
@@ -588,7 +723,10 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const watchAd = useCallback(() => {
     setBattery((b) => Math.min(BATTERY_CAP, b + REWARD_CHARGE));
     pushNotice('SYSTEM', `Rewarded video complete. +${REWARD_CHARGE} battery.`);
-  }, [setBattery, pushNotice]);
+    if (supabase && user) {
+      void sbInsert('battery_events', { user_id: user.id, delta: REWARD_CHARGE, reason: 'rewarded_video' });
+    }
+  }, [setBattery, pushNotice, user]);
 
   const value: Store = {
     demoMode,
@@ -612,6 +750,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     setOpenApp,
     deck,
     deckIndex,
+    refreshDeck,
     swiped,
     undoAvailable,
     norf,

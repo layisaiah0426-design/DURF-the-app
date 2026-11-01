@@ -33,6 +33,28 @@ export const COPY = {
   welcome4: 'Go on the date. Trade codes. Keep Durfing.',
 };
 
+// Sponsor creatives for the SPONSORED desktop widget and the rewarded video
+// in POWER.EXE. House ads only — no real business is named here until a real
+// sponsor exists; swapping in a paid creative is a one-line change per slot.
+export const SPONSOR_CREATIVES: { headline: string; body: string }[] = [
+  {
+    headline: 'DURF.EXE — every date costs $0.00.',
+    body: 'Sponsors keep it free. No subscriptions, no cover charges, no awkward check-splitting.',
+  },
+  {
+    headline: 'SPONSOR THIS SPOT',
+    body: 'Rexburg business? Your logo here keeps dates free for students. Talk to the Durf team.',
+  },
+  {
+    headline: 'POWER.EXE — running low?',
+    body: 'Watch a short sponsor video and get +5 battery. Battery is never sold.',
+  },
+];
+
+// Length of the rewarded video in POWER.EXE. The reward lands only if the
+// full spot plays — skipping forfeits it, like a real rewarded ad.
+export const REWARDED_VIDEO_SECONDS = 15;
+
 export type WidgetKind =
   | 'quest'
   | 'take'

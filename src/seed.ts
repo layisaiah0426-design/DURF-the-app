@@ -1,8 +1,9 @@
 import type { Profile } from './types';
 
-// SEED DATA ONLY — starter catalog for Discover until real users join.
-// These are NOT real users. Real accounts replace this catalog naturally
-// as people sign up. Nothing here is presented to the user as a real person.
+// SEED DATA ONLY — NOT real users.
+// Used only when no backend is configured (demo mode) and as group-date
+// filler. The live app's Discover shows real Supabase profiles only; nothing
+// here is ever presented as a real person.
 
 export const SEED_PROFILES: Profile[] = [
   {

@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Avatar, Field, Notice, WinButton, inputStyle } from '../components';
 import { COPY, DATE_CATALOG, WIDGET_LABEL, WIDGET_LIBRARY } from '../spec';
 import { useStore } from '../store';
@@ -25,7 +25,8 @@ export function ProfileCard({
             {profile.firstName}, {profile.age}
           </div>
           <div style={{ fontSize: 17 }}>
-            {profile.city} · {profile.distanceMiles} miles away · {profile.intent}
+            {profile.city}
+            {profile.distanceMiles > 0 ? ` · ${profile.distanceMiles} miles away` : ''} · {profile.intent}
           </div>
           {profile.school && <div style={{ fontSize: 16 }}>{profile.school}</div>}
           {profile.faithContext && <div style={{ fontSize: 16 }}>{profile.faithContext}</div>}
@@ -56,11 +57,21 @@ export function DiscoverWindow({ onClose }: { onClose: () => void }) {
   const [showFull, setShowFull] = useState(false);
   const card = s.deck[s.deckIndex % Math.max(s.deck.length, 1)];
   const blind = s.mode === 'Blind Date';
+  // Fresh real profiles every time Discover opens (refreshDeck is stable).
+  useEffect(() => {
+    void s.refreshDeck();
+  }, []);
 
   if (!card) {
     return (
       <div>
-        <Notice text="Nothing in this folder yet. Try a wider search in Settings." />
+        <Notice
+          text={
+            s.demoMode
+              ? 'Nothing in this folder yet. Try a wider search in Settings.'
+              : 'No real profiles here yet. You are one of the first — invite someone to join Durf and they will show up here.'
+          }
+        />
         <WinButton onClick={onClose}>Desktop</WinButton>
       </div>
     );

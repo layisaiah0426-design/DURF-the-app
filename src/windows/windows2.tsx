@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Field, Notice, WinButton, inputStyle } from '../components';
-import { COPY } from '../spec';
+import { COPY, REWARDED_VIDEO_SECONDS, SPONSOR_CREATIVES } from '../spec';
 import { useStore } from '../store';
 import type { Mode } from '../spec';
 
@@ -287,6 +287,30 @@ export function InstallWindow({ onClose }: { onClose: () => void }) {
 export function PowerWindow() {
   const s = useStore();
   const [charging, setCharging] = useState(false);
+  const [secondsLeft, setSecondsLeft] = useState(REWARDED_VIDEO_SECONDS);
+  const [spot, setSpot] = useState(0);
+  const rewardedRef = useRef(false);
+  useEffect(() => {
+    if (!charging) return;
+    const t = setInterval(() => {
+      setSecondsLeft((v) => (v <= 1 ? 0 : v - 1));
+    }, 1000);
+    return () => clearInterval(t);
+  }, [charging]);
+  useEffect(() => {
+    if (charging && secondsLeft === 0 && !rewardedRef.current) {
+      rewardedRef.current = true;
+      s.watchAd();
+      setCharging(false);
+      setSecondsLeft(REWARDED_VIDEO_SECONDS);
+    }
+  }, [charging, secondsLeft, s]);
+  const startCharge = () => {
+    rewardedRef.current = false;
+    setSpot((v) => (v + 1) % SPONSOR_CREATIVES.length);
+    setSecondsLeft(REWARDED_VIDEO_SECONDS);
+    setCharging(true);
+  };
   return (
     <div>
       <div style={{ fontSize: 22, fontWeight: 'bold' }}>POWER.EXE</div>
@@ -299,9 +323,25 @@ export function PowerWindow() {
         Battery is never sold. Watching a video is optional.
       </p>
       {charging ? (
-        <div style={{ fontSize: 18 }}>Playing sponsored video… (rewarded placeholder — real AdMob comes later)</div>
+        <div>
+          <div style={{ fontSize: 18, fontWeight: 'bold' }}>SPONSORED VIDEO</div>
+          <div style={{ fontSize: 19, margin: '8px 0' }}>{SPONSOR_CREATIVES[spot].headline}</div>
+          <div style={{ fontSize: 17 }}>{SPONSOR_CREATIVES[spot].body}</div>
+          <div style={{ background: '#fff', border: '2px solid #1C1C1C', height: 26, padding: 2, marginTop: 10 }}>
+            <div
+              style={{
+                height: '100%',
+                width: `${((REWARDED_VIDEO_SECONDS - secondsLeft) / REWARDED_VIDEO_SECONDS) * 100}%`,
+                background: '#00006F',
+              }}
+            />
+          </div>
+          <div style={{ fontSize: 17, marginTop: 8 }}>
+            Reward in {secondsLeft}s — keep this window open. Closing early forfeits the reward.
+          </div>
+        </div>
       ) : (
-        <WinButton primary disabled={s.battery >= 10} onClick={() => { setCharging(true); setTimeout(() => { s.watchAd(); setCharging(false); }, 1200); }}>
+        <WinButton primary disabled={s.battery >= 10} onClick={startCharge}>
           Watch video: +5 battery
         </WinButton>
       )}

@@ -22,6 +22,33 @@ export async function sbInsert(table: string, row: Record<string, unknown>) {
   }
 }
 
+/** Best-effort upsert (insert or update on conflict); never throws into the UI. */
+export async function sbUpsert(table: string, row: Record<string, unknown>, onConflict: string) {
+  if (!supabase) return;
+  try {
+    const { error } = await supabase.from(table).upsert(row, { onConflict });
+    if (error) console.warn(`[durf] supabase upsert ${table} failed:`, error.message);
+  } catch (e) {
+    console.warn(`[durf] supabase upsert ${table} threw:`, e);
+  }
+}
+
+/** Best-effort select; returns [] on any failure. RLS still applies. */
+export async function sbSelect<T>(table: string, columns: string): Promise<T[]> {
+  if (!supabase) return [];
+  try {
+    const { data, error } = await supabase.from(table).select(columns);
+    if (error) {
+      console.warn(`[durf] supabase select ${table} failed:`, error.message);
+      return [];
+    }
+    return (data ?? []) as T[];
+  } catch (e) {
+    console.warn(`[durf] supabase select ${table} threw:`, e);
+    return [];
+  }
+}
+
 export function useLocalStorage<T>(key: string, initial: T) {
   const [value, setValue] = useState<T>(() => {
     try {
